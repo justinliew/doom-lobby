@@ -8,10 +8,17 @@ use serde_json;
 use serde::{Serialize,Deserialize};
 
 #[derive(Serialize,Deserialize)]
+struct Player {
+	name: String,
+	id: u32,
+	index: usize
+}
+
+#[derive(Serialize,Deserialize)]
 struct Session {
 	id: u32,
 	num_players: u32,
-	players: Vec<String>
+	players: Vec<Player>
 }
 
 const KV_LOCAL: &str = "kvlocal";
@@ -61,25 +68,46 @@ fn get_next_id(sessions: &Vec<Session>) -> u32 {
 	highest + 1
 }
 
-fn create_session(name: &str) -> u32 {
+fn create_session(id: u32, name: &str) -> u32 {
 	let mut sessions = get_sessions().unwrap();
 	let id = get_next_id(&sessions);
 	let mut new_session = Session{
 		id: id,
 		num_players: 1,
-		players: Vec::<String>::new(),
+		players: Vec::<Player>::new(),
 	};
-	new_session.players.push(name.to_string());
+	let new_player = Player{
+		id: id,
+		name: name.to_string(),
+		index: 0,
+	};
+	new_session.players.push(new_player);
 	sessions.push(new_session);
 	write_sessions(sessions);
 	id
 }
 
-fn update_session(index: usize, name: &str) {
+fn join_session(index: usize, id: u32, name: &str) -> bool {
 	let mut sessions = get_sessions().unwrap();
 	sessions[index].num_players+=1;
-	sessions[index].players.push(name.to_string());
-	write_sessions(sessions);
+
+	let mut slots = [false;4];
+	for p in &sessions[index].players {
+		slots[p.index] = true;
+	}
+	for i in 0..4 {
+		if !slots[i] {
+			let new_player = Player{
+				id: id,
+				name: name.to_string(),
+				index: i,
+			};
+			sessions[index].players.push(new_player);
+			write_sessions(sessions);
+			return true;
+		}
+	}
+	return false
 }
 
 // let's keep this simple for now
@@ -124,7 +152,7 @@ fn rank_session(s: &Session) -> i32 {
 
 		// get sessions from our kv
 		// return them to the client in this form:
-		// <number of entries>,[<id>,<num_players>,<player1>...<playerN>],
+		// <number of entries>,[<sessionid>,<num_players>,[playerid,playername]...<playerN>],
 		(&Method::GET, "/sessions") => {
 			let s = get_sessions();
 			match s {
@@ -134,7 +162,7 @@ fn rank_session(s: &Session) -> i32 {
 					for s in &sessions {
 						client_string.push_str(&format!(",{},{}",s.id,s.num_players));
 						for p in &s.players {
-							client_string.push_str(&format!(",{}",p));
+							client_string.push_str(&format!(",{},{}",p.id,p.name));
 						}
 					}
 
@@ -150,6 +178,7 @@ fn rank_session(s: &Session) -> i32 {
 			}
 		},
 		(&Method::GET, "/join_best_session") => {
+			let id = header_val(req.headers().get("id")).parse::<u32>().unwrap();
 			let name = header_val(req.headers().get("name"));
 			let s = get_sessions();
 			match s {
@@ -159,13 +188,13 @@ fn rank_session(s: &Session) -> i32 {
 					// if we are already in a session, return that one
 					for (i,s) in sessions.iter().enumerate() {
 						for p in &s.players {
-							if p == name {
+							if p.id == id {
 								return Ok(Response::builder()
 								.status(StatusCode::OK)
 								.header("Access-Control-Allow-Origin","*")
 								.header("Access-Control-Allow-Headers","*")
 								.header("Vary","Origin")
-													.body(Body::from(format!("{}",s.id)))?);
+								.body(Body::from(format!("{}",s.id)))?);
 							}
 							let rank = rank_session(s);
 							println!("Ranking session {}", rank);
@@ -176,26 +205,26 @@ fn rank_session(s: &Session) -> i32 {
 						}
 					}
 					if best_index > -1 {
-						let id = sessions[best_index as usize].id;
-						update_session(best_index as usize,name);
+						let sessionid = sessions[best_index as usize].id;
+						join_session(best_index as usize,id,name);
 						return Ok(Response::builder()
 						.status(StatusCode::OK)
 						.header("Access-Control-Allow-Origin","*")
 						.header("Access-Control-Allow-Headers","*")
 						.header("Vary","Origin")
-						.body(Body::from(format!("{}",id)))?);
+						.body(Body::from(format!("{}",sessionid)))?);
 					} else {
-						let id = create_session(name);
+						let sessionid = create_session(id,name);
 						return Ok(Response::builder()
 						.header("Access-Control-Allow-Origin","*")
 						.header("Access-Control-Allow-Headers","*")
 						.header("Vary","Origin")
 						.status(StatusCode::OK)
-						.body(Body::from(format!("{}",id)))?);
+						.body(Body::from(format!("{}",sessionid)))?);
 					}
 				},
 				_ => {
-					let id = create_session(name);
+					let id = create_session(id,name);
 					return Ok(Response::builder()
 					.status(StatusCode::OK)
 					.header("Access-Control-Allow-Origin","*")
@@ -204,12 +233,6 @@ fn rank_session(s: &Session) -> i32 {
 					.body(Body::from(format!("{}",id)))?);
 				}
 			}
-
-
-
-			Ok(Response::builder()
-			.status(StatusCode::OK)
-			.body(Body::from("TODOSESSIONID"))?)
 		},
 
         // Catch all other requests and return a 404.
