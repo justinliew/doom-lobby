@@ -95,9 +95,17 @@ fn rank_session(s: &Session) -> i32 {
 #[fastly::main]
 	fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
     // Make any desired changes to the client request.
-	// req.headers_mut()
-    //     .insert("Host", HeaderValue::from_static("example.com"));
+	req.headers_mut()
+        .insert("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
 
+	if req.method() == Method::OPTIONS {
+        return Ok(Response::builder()
+			.status(StatusCode::OK)
+			.header("Access-Control-Allow-Origin","*")
+			.header("Access-Control-Allow-Headers","*")
+			.header("Vary","Origin")
+            .body(Body::from(""))?);
+	}
     // We can filter requests that have unexpected methods.
     const VALID_METHODS: [Method; 3] = [Method::HEAD, Method::GET, Method::POST];
     if !(VALID_METHODS.contains(req.method())) {
@@ -154,7 +162,10 @@ fn rank_session(s: &Session) -> i32 {
 							if p == name {
 								return Ok(Response::builder()
 								.status(StatusCode::OK)
-								.body(Body::from(format!("{}",s.id)))?);
+								.header("Access-Control-Allow-Origin","*")
+								.header("Access-Control-Allow-Headers","*")
+								.header("Vary","Origin")
+													.body(Body::from(format!("{}",s.id)))?);
 							}
 							let rank = rank_session(s);
 							println!("Ranking session {}", rank);
@@ -169,10 +180,16 @@ fn rank_session(s: &Session) -> i32 {
 						update_session(best_index as usize,name);
 						return Ok(Response::builder()
 						.status(StatusCode::OK)
+						.header("Access-Control-Allow-Origin","*")
+						.header("Access-Control-Allow-Headers","*")
+						.header("Vary","Origin")
 						.body(Body::from(format!("{}",id)))?);
 					} else {
 						let id = create_session(name);
 						return Ok(Response::builder()
+						.header("Access-Control-Allow-Origin","*")
+						.header("Access-Control-Allow-Headers","*")
+						.header("Vary","Origin")
 						.status(StatusCode::OK)
 						.body(Body::from(format!("{}",id)))?);
 					}
@@ -181,6 +198,9 @@ fn rank_session(s: &Session) -> i32 {
 					let id = create_session(name);
 					return Ok(Response::builder()
 					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
 					.body(Body::from(format!("{}",id)))?);
 				}
 			}
