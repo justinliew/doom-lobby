@@ -68,31 +68,31 @@ fn get_next_id(sessions: &Vec<Session>) -> u32 {
 	highest + 1
 }
 
-fn create_session(id: u32, name: &str) -> u32 {
+fn create_session(playerid: u32, name: &str) -> u32 {
 	let mut sessions = get_sessions().unwrap();
-	let id = get_next_id(&sessions);
+	let sessionid = get_next_id(&sessions);
 	let mut new_session = Session{
-		id: id,
+		id: sessionid,
 		num_players: 1,
 		players: Vec::<Player>::new(),
 	};
 	let new_player = Player{
-		id: id,
+		id: playerid,
 		name: name.to_string(),
 		index: 0,
 	};
 	new_session.players.push(new_player);
 	sessions.push(new_session);
 	write_sessions(sessions);
-	id
+	sessionid
 }
 
-fn join_session(index: usize, id: u32, name: &str) -> bool {
+fn join_session(session_index: usize, id: u32, name: &str) -> (usize,bool) {
 	let mut sessions = get_sessions().unwrap();
-	sessions[index].num_players+=1;
+	sessions[session_index].num_players+=1;
 
 	let mut slots = [false;4];
-	for p in &sessions[index].players {
+	for p in &sessions[session_index].players {
 		slots[p.index] = true;
 	}
 	for i in 0..4 {
@@ -102,12 +102,12 @@ fn join_session(index: usize, id: u32, name: &str) -> bool {
 				name: name.to_string(),
 				index: i,
 			};
-			sessions[index].players.push(new_player);
+			sessions[session_index].players.push(new_player);
 			write_sessions(sessions);
-			return true;
+			return (i,true);
 		}
 	}
-	return false
+	return (0,false);
 }
 
 // let's keep this simple for now
@@ -194,7 +194,7 @@ fn rank_session(s: &Session) -> i32 {
 								.header("Access-Control-Allow-Origin","*")
 								.header("Access-Control-Allow-Headers","*")
 								.header("Vary","Origin")
-								.body(Body::from(format!("{}",s.id)))?);
+								.body(Body::from(format!("{},{}",s.id,p.index)))?);
 							}
 							let rank = rank_session(s);
 							println!("Ranking session {}", rank);
@@ -206,13 +206,13 @@ fn rank_session(s: &Session) -> i32 {
 					}
 					if best_index > -1 {
 						let sessionid = sessions[best_index as usize].id;
-						join_session(best_index as usize,id,name);
+						let (index,_) = join_session(best_index as usize,id,name);
 						return Ok(Response::builder()
 						.status(StatusCode::OK)
 						.header("Access-Control-Allow-Origin","*")
 						.header("Access-Control-Allow-Headers","*")
 						.header("Vary","Origin")
-						.body(Body::from(format!("{}",sessionid)))?);
+						.body(Body::from(format!("{},{}",sessionid,index)))?);
 					} else {
 						let sessionid = create_session(id,name);
 						return Ok(Response::builder()
@@ -220,17 +220,17 @@ fn rank_session(s: &Session) -> i32 {
 						.header("Access-Control-Allow-Headers","*")
 						.header("Vary","Origin")
 						.status(StatusCode::OK)
-						.body(Body::from(format!("{}",sessionid)))?);
+						.body(Body::from(format!("{},{}",sessionid,0)))?);
 					}
 				},
 				_ => {
-					let id = create_session(id,name);
+					let sessionid = create_session(id,name);
 					return Ok(Response::builder()
 					.status(StatusCode::OK)
 					.header("Access-Control-Allow-Origin","*")
 					.header("Access-Control-Allow-Headers","*")
 					.header("Vary","Origin")
-					.body(Body::from(format!("{}",id)))?);
+					.body(Body::from(format!("{},{}",sessionid,0)))?);
 				}
 			}
 		},
