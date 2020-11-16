@@ -197,7 +197,6 @@ fn rank_session(s: &Session) -> i32 {
 								.body(Body::from(format!("{},{}",s.id,p.index)))?);
 							}
 							let rank = rank_session(s);
-							println!("Ranking session {}", rank);
 							if rank > best {
 								best = rank;
 								best_index = i as i32;
@@ -234,7 +233,41 @@ fn rank_session(s: &Session) -> i32 {
 				}
 			}
 		},
+		(&Method::POST, "/update_name_in_session") => {
+			let sessionid = header_val(req.headers().get("sessionid")).parse::<u32>().unwrap();
+			let playerid = header_val(req.headers().get("playerid")).parse::<u32>().unwrap();
+			let name = header_val(req.headers().get("name"));
+			let s = get_sessions();
+			match s {
+				Ok(mut sessions) => {
+					for session in &mut sessions {
+						if session.id == sessionid {
+							for p in &mut session.players {
+								if p.id == playerid {
+									p.name = name.to_string();
+								}
+							}
+						}
+					}
+					write_sessions(sessions);
 
+					Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?)
+				},
+				_ => {
+					Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?)
+				}
+			}
+		},
         // Catch all other requests and return a 404.
         _ => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
