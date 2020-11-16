@@ -6,18 +6,22 @@ use fastly::http::header::HeaderValue;
 
 use serde_json;
 use serde::{Serialize,Deserialize};
+extern crate serde_millis;
+
+use std::time::{Duration,Instant};
 
 #[derive(Serialize,Deserialize)]
 struct Player {
 	name: String,
 	id: u32,
-	index: usize
+	index: usize,
+	#[serde(with = "serde_millis")]
+	last_heartbeat: Instant,
 }
 
 #[derive(Serialize,Deserialize)]
 struct Session {
 	id: u32,
-	num_players: u32,
 	players: Vec<Player>
 }
 
@@ -49,6 +53,7 @@ fn get_sessions() -> Result<Vec<Session>, Error> {
 }
 fn write_sessions(sessions: Vec<Session>) {
 	let json = serde_json::to_string(&sessions).unwrap();
+	println!("write_sessions: {}", json);
 
 	let mut kvreq = Request::builder()
 	.method(Method::POST)
@@ -71,16 +76,19 @@ fn get_next_id(sessions: &Vec<Session>) -> u32 {
 fn create_session(playerid: u32, name: &str) -> u32 {
 	let mut sessions = get_sessions().unwrap();
 	let sessionid = get_next_id(&sessions);
+	println!("create_session {}", sessionid);
 	let mut new_session = Session{
 		id: sessionid,
-		num_players: 1,
 		players: Vec::<Player>::new(),
 	};
 	let new_player = Player{
 		id: playerid,
 		name: name.to_string(),
 		index: 0,
+		last_heartbeat: Instant::now(),
 	};
+	println!("create_session: adding player {} {}", new_player.id, new_player.name);
+
 	new_session.players.push(new_player);
 	sessions.push(new_session);
 	write_sessions(sessions);
@@ -89,7 +97,6 @@ fn create_session(playerid: u32, name: &str) -> u32 {
 
 fn join_session(session_index: usize, id: u32, name: &str) -> (usize,bool) {
 	let mut sessions = get_sessions().unwrap();
-	sessions[session_index].num_players+=1;
 
 	let mut slots = [false;4];
 	for p in &sessions[session_index].players {
@@ -101,7 +108,9 @@ fn join_session(session_index: usize, id: u32, name: &str) -> (usize,bool) {
 				id: id,
 				name: name.to_string(),
 				index: i,
+				last_heartbeat: Instant::now()
 			};
+			println!("join_session: adding player {} {} to slot {} in session {}", id, name, i, session_index);
 			sessions[session_index].players.push(new_player);
 			write_sessions(sessions);
 			return (i,true);
@@ -110,11 +119,28 @@ fn join_session(session_index: usize, id: u32, name: &str) -> (usize,bool) {
 	return (0,false);
 }
 
+fn prune_stale_sessions(sessions: &mut Vec<Session>, playerid: u32, sessionid: u32, do_update: bool) {
+	let now = Instant::now();
+	for session in &mut sessions.iter_mut() {
+		for p in &mut session.players {
+			if do_update && p.id == playerid && sessionid == session.id {
+				p.last_heartbeat = now;
+			}
+		}
+		session.players.retain(|p| {
+			now.duration_since(p.last_heartbeat) < Duration::from_secs(60 * 1)
+		});
+	}
+	sessions.retain(|s| {
+		s.players.len() > 0
+	});
+}
+
 // let's keep this simple for now
 fn rank_session(s: &Session) -> i32 {
-	match s.num_players == 4 {
+	match s.players.len() == 4 {
 		true => i32::MIN,
-		false => s.num_players as i32
+		false => s.players.len() as i32
 	}
 	// later perhaps look at update time
 }
@@ -160,7 +186,7 @@ fn rank_session(s: &Session) -> i32 {
 					let mut client_string = format!("{}",sessions.len());
 
 					for s in &sessions {
-						client_string.push_str(&format!(",{},{}",s.id,s.num_players));
+						client_string.push_str(&format!(",{},{}",s.id,s.players.len()));
 						for p in &s.players {
 							client_string.push_str(&format!(",{},{}",p.id,p.name));
 						}
@@ -182,13 +208,15 @@ fn rank_session(s: &Session) -> i32 {
 			let name = header_val(req.headers().get("name"));
 			let s = get_sessions();
 			match s {
-				Ok(sessions) => {
+				Ok(mut sessions) => {
+					prune_stale_sessions(&mut sessions,0,0,false);
 					let mut best = i32::MIN;
 					let mut best_index : i32 = -1;
 					// if we are already in a session, return that one
 					for (i,s) in sessions.iter().enumerate() {
 						for p in &s.players {
 							if p.id == id {
+								println!("/join_best_session {} rejoining existing session {}", id,s.id);
 								return Ok(Response::builder()
 								.status(StatusCode::OK)
 								.header("Access-Control-Allow-Origin","*")
@@ -205,6 +233,7 @@ fn rank_session(s: &Session) -> i32 {
 					}
 					if best_index > -1 {
 						let sessionid = sessions[best_index as usize].id;
+						println!("/join_best_session {} joining existing session {}", id,sessionid);
 						let (index,_) = join_session(best_index as usize,id,name);
 						return Ok(Response::builder()
 						.status(StatusCode::OK)
@@ -214,6 +243,7 @@ fn rank_session(s: &Session) -> i32 {
 						.body(Body::from(format!("{},{}",sessionid,index)))?);
 					} else {
 						let sessionid = create_session(id,name);
+						println!("/join_best_session {} create new session {}", id,sessionid);
 						return Ok(Response::builder()
 						.header("Access-Control-Allow-Origin","*")
 						.header("Access-Control-Allow-Headers","*")
@@ -268,7 +298,33 @@ fn rank_session(s: &Session) -> i32 {
 				}
 			}
 		},
-        // Catch all other requests and return a 404.
+		(&Method::POST, "/heartbeat") => {
+			let sessionid = header_val(req.headers().get("sessionid")).parse::<u32>().unwrap();
+			let playerid = header_val(req.headers().get("playerid")).parse::<u32>().unwrap();
+			let s = get_sessions();
+			match s {
+				Ok(mut sessions) => {
+					prune_stale_sessions(&mut sessions,playerid,sessionid,true);
+					write_sessions(sessions);
+
+					Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?)
+				},
+				_ => {
+					Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?)
+				}
+			}
+		},
+		// Catch all other requests and return a 404.
         _ => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("The page you requested could not be found"))?),
