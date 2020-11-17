@@ -183,18 +183,11 @@ fn rank_session(s: &Session) -> i32 {
 			let s = get_sessions();
 			match s {
 				Ok(sessions) => {
-					let mut client_string = format!("{}",sessions.len());
 
-					for s in &sessions {
-						client_string.push_str(&format!(",{},{}",s.id,s.players.len()));
-						for p in &s.players {
-							client_string.push_str(&format!(",{},{}",p.id,p.name));
-						}
-					}
 
 					Ok(Response::builder()
 					.status(StatusCode::OK)
-					.body(Body::from(client_string))?)
+					.body(Body::from(serde_json::to_string(&sessions).unwrap()))?)
 				},
 				_ => {
 					Ok(Response::builder()
