@@ -10,6 +10,54 @@ extern crate serde_millis;
 
 use std::time::{Duration,Instant};
 
+#[derive(Serialize)]
+struct Pop {
+	name: &'static str,
+	ip: &'static str,
+}
+
+const POPS: &'static [&'static Pop] = &[
+	&Pop{name: "HKG", ip: "151.101.77.51"},
+	&Pop{name: "IAH", ip: "151.101.181.51"},
+	&Pop{name: "JAX", ip: "199.232.1.51"},
+	&Pop{name: "JNB", ip: "151.101.173.51"},
+	&Pop{name: "MCI", ip: "199.232.73.51"},
+	&Pop{name: "LCY", ip: "151.101.17.51"},
+	&Pop{name: "LON", ip: "199.232.57.51"},
+	&Pop{name: "LHR", ip: "151.101.61.51"},
+	&Pop{name: "BUR", ip: "151.101.197.51"},
+	&Pop{name: "LAX", ip: "151.101.25.51"},
+	&Pop{name: "MAD", ip: "151.101.133.51"},
+	&Pop{name: "MAN", ip: "199.232.53.51"},
+	&Pop{name: "MRS", ip: "199.232.81.51"},
+	&Pop{name: "MEL", ip: "151.101.81.51"},
+	&Pop{name: "MIA", ip: "151.101.5.51"},
+	&Pop{name: "MSP", ip: "151.101.149.51"},
+	&Pop{name: "STP", ip: "199.232.29.51"},
+	&Pop{name: "YUL", ip: "151.101.137.51"},
+	&Pop{name: "BOM", ip: "151.101.153.51"},
+	&Pop{name: "LGA", ip: "199.232.37.51"},
+	&Pop{name: "EWR", ip: "151.101.209.51"},
+	&Pop{name: "ITM", ip: "151.101.89.51"},
+	&Pop{name: "OSL", ip: "151.101.237.51"},
+	&Pop{name: "PAO", ip: "151.101.189.51"},
+	&Pop{name: "CDG", ip: "151.101.121.51"},
+	&Pop{name: "GIG", ip: "151.101.177.51"},
+	&Pop{name: "SJC", ip: "151.101.41.51"},
+	&Pop{name: "SCL", ip: "151.101.221.51"},
+	&Pop{name: "GRU", ip: "151.101.93.51"},
+	&Pop{name: "SEA", ip: "151.101.53.51"},
+	&Pop{name: "SIN", ip: "151.101.9.51"},
+	&Pop{name: "STL", ip: "199.232.69.51"},
+	&Pop{name: "BMA", ip: "151.101.85.51"},
+	&Pop{name: "SYD", ip: "151.101.29.51"},
+	&Pop{name: "TYO", ip: "151.101.109.51"},
+	&Pop{name: "HND", ip: "151.101.229.51"},
+	&Pop{name: "YYZ", ip: "151.101.125.51"},
+	&Pop{name: "YVR", ip: "151.101.213.51"},
+	&Pop{name: "VIE", ip: "199.232.17.51"},
+];
+
 #[derive(Serialize,Deserialize)]
 struct Player {
 	name: String,
@@ -133,6 +181,12 @@ fn join_session(session_id: u32, id: u32, name: &str) -> Result<(usize,String),&
 	}
 	if session_index == usize::MAX {
 		return Err("Couldn't find session");
+	}
+
+	for p in &sessions[session_index].players {
+		if p.id == id {
+			return Ok((p.index,sessions[session_index].pop.clone()));
+		}
 	}
 
 	join_session_by_index(session_index as usize, id, name)
@@ -406,6 +460,14 @@ fn rank_session(s: &Session) -> i32 {
 					.body(Body::from(""))?)
 				}
 			}
+		},
+		(&Method::GET, "/get_pops") => {
+			Ok(Response::builder()
+			.status(StatusCode::OK)
+			.header("Access-Control-Allow-Origin","*")
+			.header("Access-Control-Allow-Headers","*")
+			.header("Vary","Origin")
+			.body(Body::from(serde_json::to_string(&POPS).unwrap()))?)
 		},
 		// Catch all other requests and return a 404.
         _ => Ok(Response::builder()
