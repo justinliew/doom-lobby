@@ -241,7 +241,7 @@ fn rank_session(s: &Session) -> i32 {
 								.header("Access-Control-Allow-Origin","*")
 								.header("Access-Control-Allow-Headers","*")
 								.header("Vary","Origin")
-								.body(Body::from(format!("{},{}",s.id,p.index)))?);
+								.body(Body::from(format!("{},{},{}",s.id,p.index,pop)))?);
 							}
 							let rank = rank_session(s);
 							if rank > best {
@@ -260,7 +260,7 @@ fn rank_session(s: &Session) -> i32 {
 								.header("Access-Control-Allow-Origin","*")
 								.header("Access-Control-Allow-Headers","*")
 								.header("Vary","Origin")
-								.body(Body::from(format!("{},{}",sessionid,index)))?);
+								.body(Body::from(format!("{},{},{}",sessionid,index,pop)))?);
 							},
 							_ => {
 								return Ok(Response::builder()
@@ -268,7 +268,7 @@ fn rank_session(s: &Session) -> i32 {
 								.header("Access-Control-Allow-Origin","*")
 								.header("Access-Control-Allow-Headers","*")
 								.header("Vary","Origin")
-								.body(Body::from(format!("-1,-1")))?);
+								.body(Body::from(format!("-1,-1,0")))?);
 							}
 						}
 					} else {
@@ -279,7 +279,7 @@ fn rank_session(s: &Session) -> i32 {
 						.header("Access-Control-Allow-Headers","*")
 						.header("Vary","Origin")
 						.status(StatusCode::OK)
-						.body(Body::from(format!("{},{}",sessionid,0)))?);
+						.body(Body::from(format!("{},{},{}",sessionid,0,pop)))?);
 					}
 				},
 				_ => {
@@ -289,7 +289,7 @@ fn rank_session(s: &Session) -> i32 {
 					.header("Access-Control-Allow-Origin","*")
 					.header("Access-Control-Allow-Headers","*")
 					.header("Vary","Origin")
-					.body(Body::from(format!("{},{}",sessionid,0)))?);
+					.body(Body::from(format!("{},{},{}",sessionid,0,pop)))?);
 				}
 			}
 		},
