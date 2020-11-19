@@ -3,6 +3,7 @@
 use fastly::http::{Method, StatusCode};
 use fastly::{Body, Error, Request, RequestExt, Response, ResponseExt};
 use fastly::http::header::HeaderValue;
+use std::collections::HashMap;
 
 use serde_json;
 use serde::{Serialize,Deserialize};
@@ -65,6 +66,7 @@ struct Player {
 	index: usize,
 	#[serde(with = "serde_millis")]
 	last_heartbeat: Instant,
+	pops: HashMap<String, u32>,
 }
 
 #[derive(Serialize,Deserialize)]
@@ -85,7 +87,7 @@ fn header_val(header: Option<&HeaderValue>) -> &str {
 }
 
 fn get_sessions() -> Result<Vec<Session>, Error> {
-	let mut kvreq = Request::builder()
+	let kvreq = Request::builder()
 	.method(Method::GET)
 	.uri("http://kv-global.vranish.dev/sessions")
 	.body(Body::from(""))?;
@@ -100,11 +102,15 @@ fn get_sessions() -> Result<Vec<Session>, Error> {
 		}
 	}
 }
+
+fn add_ping_to_player(player: &mut Player, pop: &str, ping: u32) {
+	*player.pops.entry(pop.to_string()).or_insert(0) = ping;
+}
+
 fn write_sessions(sessions: &Vec<Session>) {
 	let json = serde_json::to_string(sessions).unwrap();
-	println!("write_sessions: {}", json);
 
-	let mut kvreq = Request::builder()
+	let kvreq = Request::builder()
 	.method(Method::POST)
 	.uri("http://kv-global.vranish.dev/sessions")
 	.body(Body::from(json)).unwrap();
@@ -136,6 +142,7 @@ fn create_session(playerid: u32, name: &str, pop: &str) -> u32 {
 		name: name.to_string(),
 		index: 0,
 		last_heartbeat: Instant::now(),
+		pops: HashMap::new(),
 	};
 	println!("create_session: adding player {} {}", new_player.id, new_player.name);
 
@@ -158,7 +165,8 @@ fn join_session_by_index(session_index: usize, id: u32, name: &str) -> Result<(u
 				id: id,
 				name: name.to_string(),
 				index: i,
-				last_heartbeat: Instant::now()
+				last_heartbeat: Instant::now(),
+				pops: HashMap::new(),
 			};
 			println!("join_session: adding player {} {} to slot {} in session {}", id, name, i, session_index);
 			sessions[session_index].players.push(new_player);
@@ -190,6 +198,22 @@ fn join_session(session_id: u32, id: u32, name: &str) -> Result<(usize,String),&
 	}
 
 	join_session_by_index(session_index as usize, id, name)
+}
+
+fn get_best_pop_and_update(sessions: &Vec<Session>, sessionid: u32) -> Result<&str,&'static str> {
+	let mut pop_vecs : Vec<Vec<(&String,&u32)>> = Vec::new();
+	for session in sessions {
+		if session.id == sessionid {
+			for player in &session.players {
+				let mut pop_vec: Vec<(&String, &u32)> = player.pops.iter().collect();
+				pop_vec.sort_by(|a, b| b.1.cmp(a.1));
+				pop_vecs.push(pop_vec);
+			}
+		}
+	}
+//	return Ok(&session.pop);
+
+	Err("Could not find session")
 }
 
 fn prune_stale_sessions(sessions: &mut Vec<Session>, playerid: u32, sessionid: u32, do_update: bool) {
@@ -276,13 +300,25 @@ fn rank_session(s: &Session) -> i32 {
 			}
 		},
 		(&Method::GET, "/join_best_session") => {
-			let id = header_val(req.headers().get("id")).parse::<u32>().unwrap();
+			let id = match header_val(req.headers().get("id")).parse::<u32>() {
+				Ok(id) => {id},
+				_ => {
+					println!("Couldn't get id from /join_best_session header: {}", header_val(req.headers().get("id")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
 			let name = header_val(req.headers().get("name"));
 			let pop = header_val(req.headers().get("pop"));
 			let s = get_sessions();
 			match s {
 				Ok(mut sessions) => {
 					prune_stale_sessions(&mut sessions,0,0,false);
+					println!("After prune, we have {} sessions", sessions.len());
 					let mut best = i32::MIN;
 					let mut best_index : i32 = -1;
 					// if we are already in a session, return that one
@@ -349,8 +385,30 @@ fn rank_session(s: &Session) -> i32 {
 		},
 		(&Method::GET, "/join_session") => {
 			let name = header_val(req.headers().get("name"));
-			let player_id = header_val(req.headers().get("playerid")).parse::<u32>().unwrap();
-			let session_id = header_val(req.headers().get("sessionid")).parse::<u32>().unwrap();
+			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get player id from join_session: {}", header_val(req.headers().get("playerid")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
+			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get session id from join_session: {}", header_val(req.headers().get("sessionid")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
 			match join_session(session_id,player_id,name) {
 				Ok((index,pop)) => {
 					return Ok(Response::builder()
@@ -371,16 +429,38 @@ fn rank_session(s: &Session) -> i32 {
 			}
 		},
 		(&Method::POST, "/update_name_in_session") => {
-			let sessionid = header_val(req.headers().get("sessionid")).parse::<u32>().unwrap();
-			let playerid = header_val(req.headers().get("playerid")).parse::<u32>().unwrap();
+			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get player id from update_name_in_session: {}", header_val(req.headers().get("playerid")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
+			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get session id from update_name_in_session: {}", header_val(req.headers().get("sessionid")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
 			let name = header_val(req.headers().get("name"));
 			let s = get_sessions();
 			match s {
 				Ok(mut sessions) => {
 					for session in &mut sessions {
-						if session.id == sessionid {
+						if session.id == session_id {
 							for p in &mut session.players {
-								if p.id == playerid {
+								if p.id == player_id {
 									p.name = name.to_string();
 								}
 							}
@@ -406,13 +486,24 @@ fn rank_session(s: &Session) -> i32 {
 			}
 		},
 		(&Method::POST, "/update_pop_in_session") => {
-			let sessionid = header_val(req.headers().get("sessionid")).parse::<u32>().unwrap();
+			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get session id from update_pop_in_session: {}", header_val(req.headers().get("sessionid")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
 			let pop = header_val(req.headers().get("pop"));
 			let s = get_sessions();
 			match s {
 				Ok(mut sessions) => {
 					for session in &mut sessions {
-						if session.id == sessionid {
+						if session.id == session_id {
 							session.pop = pop.to_string();
 						}
 					}
@@ -436,20 +527,56 @@ fn rank_session(s: &Session) -> i32 {
 			}
 		},
 		(&Method::POST, "/heartbeat") => {
-			let sessionid = header_val(req.headers().get("sessionid")).parse::<u32>().unwrap();
-			let playerid = header_val(req.headers().get("playerid")).parse::<u32>().unwrap();
-			let s = get_sessions();
-			match s {
-				Ok(mut sessions) => {
-					prune_stale_sessions(&mut sessions,playerid,sessionid,true);
-					write_sessions(&sessions);
-
-					Ok(Response::builder()
+			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get player id from heartbeat: {}", header_val(req.headers().get("playerid")));
+					return Ok(Response::builder()
 					.status(StatusCode::OK)
 					.header("Access-Control-Allow-Origin","*")
 					.header("Access-Control-Allow-Headers","*")
 					.header("Vary","Origin")
-					.body(Body::from(""))?)
+					.body(Body::from(""))?);
+				}
+			};
+			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get session id from heartbeat: {}", header_val(req.headers().get("sessionid")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
+			let s = get_sessions();
+			match s {
+				Ok(mut sessions) => {
+					prune_stale_sessions(&mut sessions,player_id,session_id,true);
+
+					match get_best_pop_and_update(&sessions, session_id) {
+						Ok(new_pop) => {
+							write_sessions(&sessions);
+							println!("heartbeat for {} {}, returning {}", session_id, player_id, new_pop);
+
+							Ok(Response::builder()
+							.status(StatusCode::OK)
+							.header("Access-Control-Allow-Origin","*")
+							.header("Access-Control-Allow-Headers","*")
+							.header("Vary","Origin")
+							.body(Body::from(format!("{}",new_pop)))?)
+						},
+						_ => {
+							Ok(Response::builder()
+							.status(StatusCode::OK)
+							.header("Access-Control-Allow-Origin","*")
+							.header("Access-Control-Allow-Headers","*")
+							.header("Vary","Origin")
+							.body(Body::from(format!("")))?)
+						}
+					}
 				},
 				_ => {
 					Ok(Response::builder()
@@ -468,6 +595,63 @@ fn rank_session(s: &Session) -> i32 {
 			.header("Access-Control-Allow-Headers","*")
 			.header("Vary","Origin")
 			.body(Body::from(serde_json::to_string(&POPS).unwrap()))?)
+		},
+		(&Method::POST, "/add_ping_to_session") => {
+			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get player id from add_ping_to_session: {}", header_val(req.headers().get("playerid")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
+			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+				Ok(id) => id,
+				_ => {
+					println!("Couldn't get session id from add_ping_to_session: {}", header_val(req.headers().get("sessionid")));
+					return Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?);
+				}
+			};
+			let ping = header_val(req.headers().get("ping")).parse::<u32>().unwrap();
+			let pop = header_val(req.headers().get("pop"));
+			let s = get_sessions();
+			match s {
+				Ok(mut sessions) => {
+					for session in &mut sessions {
+						if session.id == session_id {
+							for p in &mut session.players {
+								if p.id == player_id {
+									add_ping_to_player(p,pop,ping);
+								}
+							}
+						}
+					}
+					write_sessions(&sessions);
+					Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?)
+				},
+				_ => {
+					Ok(Response::builder()
+					.status(StatusCode::OK)
+					.header("Access-Control-Allow-Origin","*")
+					.header("Access-Control-Allow-Headers","*")
+					.header("Vary","Origin")
+					.body(Body::from(""))?)
+				}
+			}
 		},
 		// Catch all other requests and return a 404.
         _ => Ok(Response::builder()
