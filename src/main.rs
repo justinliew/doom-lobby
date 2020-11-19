@@ -92,7 +92,8 @@ fn get_sessions() -> Result<Vec<Session>, Error> {
 	.uri("http://kv-global.vranish.dev/sessions")
 	.body(Body::from(""))?;
 	let resp = kvreq.send(KV_GLOBAL)?;
-	match serde_json::from_str(&resp.into_body().into_string()) {
+	let body_str = resp.into_body().into_string();
+	match serde_json::from_str(&body_str) {
 		Ok(v) => {
 			let sessions : Vec<Session> = v;
 			Ok(sessions)
@@ -231,6 +232,7 @@ fn prune_stale_sessions(sessions: &mut Vec<Session>, playerid: u32, sessionid: u
 	sessions.retain(|s| {
 		s.players.len() > 0
 	});
+	write_sessions(&sessions);
 }
 
 // let's keep this simple for now
