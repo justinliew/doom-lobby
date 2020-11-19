@@ -4,6 +4,7 @@ use fastly::http::{Method, StatusCode};
 use fastly::{Body, Error, Request, RequestExt, Response, ResponseExt};
 use fastly::http::header::HeaderValue;
 use std::collections::HashMap;
+use core::cmp::Ordering::Equal;
 
 use serde_json;
 use serde::{Serialize,Deserialize};
@@ -201,15 +202,26 @@ fn join_session(session_id: u32, id: u32, name: &str) -> Result<(usize,String),&
 	join_session_by_index(session_index as usize, id, name)
 }
 
-fn get_best_pop_and_update(sessions: &Vec<Session>, sessionid: u32) -> Result<&str,&'static str> {
+fn get_best_pop_and_update(sessions: &Vec<Session>, sessionid: u32) -> Result<String,&'static str> {
 	let mut pop_vecs : Vec<Vec<(&String,&u32)>> = Vec::new();
+	let mut merged_pops: HashMap<String, Vec<u32>> = HashMap::new();
+
 	for session in sessions {
 		if session.id == sessionid {
 			for player in &session.players {
-				let mut pop_vec: Vec<(&String, &u32)> = player.pops.iter().collect();
-				pop_vec.sort_by(|a, b| b.1.cmp(a.1));
-				pop_vecs.push(pop_vec);
+				if (player.pops.len() as f32) < (POPS.len() as f32) * 0.9 {
+					return Err("Not enough data to make a good determination");
+				}
+				for pop in &player.pops {
+					merged_pops.entry(pop.0.to_string()).or_insert(Vec::new()).push(*pop.1);
+				}
 			}
+			let merged_as_vec: Vec<(&String, &Vec<u32>)> = merged_pops.iter().collect();
+
+			//.sort_by(|a,b| (b.1.partial_cmp(&a.1).unwrap_or(Equal)))
+			let mut sorted_pops = merged_as_vec.iter().map(|(n,ps)| (n,ps.iter().sum::<u32>() as f32 / ps.len() as f32)).collect::<Vec<(&&String,f32)>>();
+			sorted_pops.sort_by(|a,b| (a.1.partial_cmp(&b.1).unwrap_or(Equal)));
+			return Ok(sorted_pops[0].0.to_string());
 		}
 	}
 //	return Ok(&session.pop);
