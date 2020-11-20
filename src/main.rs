@@ -6,59 +6,64 @@ use fastly::http::header::HeaderValue;
 use std::collections::HashMap;
 use core::cmp::Ordering::Equal;
 
-use serde_json;
 use serde::{Serialize,Deserialize};
 extern crate serde_millis;
 
 use std::time::{Duration,Instant};
 
 #[derive(Serialize)]
-struct Pop {
+struct StaticPop {
 	name: &'static str,
 	ip: &'static str,
 }
 
-const POPS: &'static [&'static Pop] = &[
-	&Pop{name: "HKG", ip: "151.101.77.51"},
-	&Pop{name: "IAH", ip: "151.101.181.51"},
-	&Pop{name: "JAX", ip: "199.232.1.51"},
-	&Pop{name: "JNB", ip: "151.101.173.51"},
-	&Pop{name: "MCI", ip: "199.232.73.51"},
-	&Pop{name: "LCY", ip: "151.101.17.51"},
-	&Pop{name: "LON", ip: "199.232.57.51"},
-	&Pop{name: "LHR", ip: "151.101.61.51"},
-	&Pop{name: "BUR", ip: "151.101.197.51"},
-	&Pop{name: "LAX", ip: "151.101.25.51"},
-	&Pop{name: "MAD", ip: "151.101.133.51"},
-	&Pop{name: "MAN", ip: "199.232.53.51"},
-	&Pop{name: "MRS", ip: "199.232.81.51"},
-	&Pop{name: "MEL", ip: "151.101.81.51"},
-	&Pop{name: "MIA", ip: "151.101.5.51"},
-	&Pop{name: "MSP", ip: "151.101.149.51"},
-	&Pop{name: "STP", ip: "199.232.29.51"},
-	&Pop{name: "YUL", ip: "151.101.137.51"},
-	&Pop{name: "BOM", ip: "151.101.153.51"},
-	&Pop{name: "LGA", ip: "199.232.37.51"},
-	&Pop{name: "EWR", ip: "151.101.209.51"},
-	&Pop{name: "ITM", ip: "151.101.89.51"},
-	&Pop{name: "OSL", ip: "151.101.237.51"},
-	&Pop{name: "PAO", ip: "151.101.189.51"},
-	&Pop{name: "CDG", ip: "151.101.121.51"},
-	&Pop{name: "GIG", ip: "151.101.177.51"},
-	&Pop{name: "SJC", ip: "151.101.41.51"},
-	&Pop{name: "SCL", ip: "151.101.221.51"},
-	&Pop{name: "GRU", ip: "151.101.93.51"},
-	&Pop{name: "SEA", ip: "151.101.53.51"},
-	&Pop{name: "SIN", ip: "151.101.9.51"},
-	&Pop{name: "STL", ip: "199.232.69.51"},
-	&Pop{name: "BMA", ip: "151.101.85.51"},
-	&Pop{name: "SYD", ip: "151.101.29.51"},
-	&Pop{name: "TYO", ip: "151.101.109.51"},
-	&Pop{name: "HND", ip: "151.101.229.51"},
-	&Pop{name: "YYZ", ip: "151.101.125.51"},
-	&Pop{name: "YVR", ip: "151.101.213.51"},
-	&Pop{name: "VIE", ip: "199.232.17.51"},
+const POPS: &'static [&'static StaticPop] = &[
+	&StaticPop{name: "HKG", ip: "151.101.77.51"},
+	&StaticPop{name: "IAH", ip: "151.101.181.51"},
+	&StaticPop{name: "JAX", ip: "199.232.1.51"},
+	&StaticPop{name: "JNB", ip: "151.101.173.51"},
+	&StaticPop{name: "MCI", ip: "199.232.73.51"},
+	&StaticPop{name: "LCY", ip: "151.101.17.51"},
+	&StaticPop{name: "LON", ip: "199.232.57.51"},
+	&StaticPop{name: "LHR", ip: "151.101.61.51"},
+	&StaticPop{name: "BUR", ip: "151.101.197.51"},
+	&StaticPop{name: "LAX", ip: "151.101.25.51"},
+	&StaticPop{name: "MAD", ip: "151.101.133.51"},
+	&StaticPop{name: "MAN", ip: "199.232.53.51"},
+	&StaticPop{name: "MRS", ip: "199.232.81.51"},
+	&StaticPop{name: "MEL", ip: "151.101.81.51"},
+	&StaticPop{name: "MIA", ip: "151.101.5.51"},
+	&StaticPop{name: "MSP", ip: "151.101.149.51"},
+	&StaticPop{name: "STP", ip: "199.232.29.51"},
+	&StaticPop{name: "YUL", ip: "151.101.137.51"},
+	&StaticPop{name: "BOM", ip: "151.101.153.51"},
+	&StaticPop{name: "LGA", ip: "199.232.37.51"},
+	&StaticPop{name: "EWR", ip: "151.101.209.51"},
+	&StaticPop{name: "ITM", ip: "151.101.89.51"},
+	&StaticPop{name: "OSL", ip: "151.101.237.51"},
+	&StaticPop{name: "PAO", ip: "151.101.189.51"},
+	&StaticPop{name: "CDG", ip: "151.101.121.51"},
+	&StaticPop{name: "GIG", ip: "151.101.177.51"},
+	&StaticPop{name: "SJC", ip: "151.101.41.51"},
+	&StaticPop{name: "SCL", ip: "151.101.221.51"},
+	&StaticPop{name: "GRU", ip: "151.101.93.51"},
+	&StaticPop{name: "SEA", ip: "151.101.53.51"},
+	&StaticPop{name: "SIN", ip: "151.101.9.51"},
+	&StaticPop{name: "STL", ip: "199.232.69.51"},
+	&StaticPop{name: "BMA", ip: "151.101.85.51"},
+	&StaticPop{name: "SYD", ip: "151.101.29.51"},
+	&StaticPop{name: "TYO", ip: "151.101.109.51"},
+	&StaticPop{name: "HND", ip: "151.101.229.51"},
+	&StaticPop{name: "YYZ", ip: "151.101.125.51"},
+	&StaticPop{name: "YVR", ip: "151.101.213.51"},
+	&StaticPop{name: "VIE", ip: "199.232.17.51"},
 ];
+
+#[derive(Serialize,Deserialize)]
+struct Pop {
+	name: String,
+	ping: u32,
+}
 
 #[derive(Serialize,Deserialize)]
 struct Player {
@@ -67,7 +72,7 @@ struct Player {
 	index: usize,
 	#[serde(with = "serde_millis")]
 	last_heartbeat: Instant,
-	pops: HashMap<String, u32>,
+	pops: Vec<Pop>,
 }
 
 #[derive(Serialize,Deserialize)]
@@ -105,8 +110,13 @@ fn get_sessions() -> Result<Vec<Session>, Error> {
 	}
 }
 
-fn add_ping_to_player(player: &mut Player, pop: &str, ping: u32) {
-	*player.pops.entry(pop.to_string()).or_insert(0) = ping;
+fn add_pings_to_player(player: &mut Player, json: &str) {
+	match serde_json::from_str(&json) {
+		Ok(p) => {
+			player.pops = p;
+		},
+		_ => {}
+	}
 }
 
 fn write_sessions(sessions: &Vec<Session>) {
@@ -144,7 +154,7 @@ fn create_session(playerid: u32, name: &str, pop: &str) -> u32 {
 		name: name.to_string(),
 		index: 0,
 		last_heartbeat: Instant::now(),
-		pops: HashMap::new(),
+		pops: Vec::new(),
 	};
 	println!("create_session: adding player {} {}", new_player.id, new_player.name);
 
@@ -168,7 +178,7 @@ fn join_session_by_index(session_index: usize, id: u32, name: &str) -> Result<(u
 				name: name.to_string(),
 				index: i,
 				last_heartbeat: Instant::now(),
-				pops: HashMap::new(),
+				pops: Vec::new(),
 			};
 			println!("join_session: adding player {} {} to slot {} in session {}", id, name, i, session_index);
 			sessions[session_index].players.push(new_player);
@@ -209,11 +219,8 @@ fn get_best_pop_and_update(sessions: &Vec<Session>, sessionid: u32) -> Result<St
 	for session in sessions {
 		if session.id == sessionid {
 			for player in &session.players {
-				if (player.pops.len() as f32) < (POPS.len() as f32) * 0.9 {
-					return Err("Not enough data to make a good determination");
-				}
 				for pop in &player.pops {
-					merged_pops.entry(pop.0.to_string()).or_insert(Vec::new()).push(*pop.1);
+					merged_pops.entry(pop.name.to_string()).or_insert(Vec::new()).push(pop.ping);
 				}
 			}
 			let merged_as_vec: Vec<(&String, &Vec<u32>)> = merged_pops.iter().collect();
@@ -610,7 +617,7 @@ fn rank_session(s: &Session) -> i32 {
 			.header("Vary","Origin")
 			.body(Body::from(serde_json::to_string(&POPS).unwrap()))?)
 		},
-		(&Method::POST, "/add_ping_to_session") => {
+		(&Method::POST, "/add_pings_to_session") => {
 			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
 				Ok(id) => id,
 				_ => {
@@ -635,8 +642,8 @@ fn rank_session(s: &Session) -> i32 {
 					.body(Body::from(""))?);
 				}
 			};
-			let ping = header_val(req.headers().get("ping")).parse::<u32>().unwrap();
-			let pop = header_val(req.headers().get("pop"));
+			let json = req.into_body().into_string();
+			println!("add_pings_to_session got {}", json);
 			let s = get_sessions();
 			match s {
 				Ok(mut sessions) => {
@@ -644,7 +651,7 @@ fn rank_session(s: &Session) -> i32 {
 						if session.id == session_id {
 							for p in &mut session.players {
 								if p.id == player_id {
-									add_ping_to_player(p,pop,ping);
+									add_pings_to_player(p, &json);
 								}
 							}
 						}
