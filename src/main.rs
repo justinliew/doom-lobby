@@ -27,7 +27,7 @@ const POPS: &'static [&'static StaticPop] = &[
 	&StaticPop{name: "LON", ip: "199.232.57.51"},
 	&StaticPop{name: "LHR", ip: "151.101.61.51"},
 	&StaticPop{name: "BUR", ip: "151.101.197.51"},
-	&StaticPop{name: "LAX", ip: "151.101.25.51"},
+	&StaticPop{name: "LGB", ip: "151.101.25.51"},
 	&StaticPop{name: "MAD", ip: "151.101.133.51"},
 	&StaticPop{name: "MAN", ip: "199.232.53.51"},
 	&StaticPop{name: "MRS", ip: "199.232.81.51"},
@@ -223,6 +223,10 @@ fn get_best_pop_and_update(sessions: &Vec<Session>, sessionid: u32) -> Result<St
 					merged_pops.entry(pop.name.to_string()).or_insert(Vec::new()).push(pop.ping);
 				}
 			}
+
+			if (merged_pops.is_empty()) {
+				return Err("no pops");
+			}
 			let merged_as_vec: Vec<(&String, &Vec<u32>)> = merged_pops.iter().collect();
 
 			//.sort_by(|a,b| (b.1.partial_cmp(&a.1).unwrap_or(Equal)))
@@ -352,7 +356,7 @@ fn rank_session(s: &Session) -> i32 {
 								.header("Access-Control-Allow-Origin","*")
 								.header("Access-Control-Allow-Headers","*")
 								.header("Vary","Origin")
-								.body(Body::from(format!("{},{},{}",s.id,p.index,pop)))?);
+								.body(Body::from(format!("{},{},{}",s.id,p.index,s.pop)))?);
 							}
 							let rank = rank_session(s);
 							if rank > best {
