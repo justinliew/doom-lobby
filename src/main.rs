@@ -1,7 +1,7 @@
 /// Default Compute@Edge template program.
 
 use fastly::http::{Method, StatusCode};
-use fastly::{Body, Error, Request, RequestExt, Response, ResponseExt};
+use fastly::{Error, Request, Response};
 use fastly::http::header::HeaderValue;
 use std::collections::HashMap;
 use core::cmp::Ordering::Equal;
@@ -93,10 +93,8 @@ fn header_val(header: Option<&HeaderValue>) -> &str {
 }
 
 fn get_sessions() -> Result<Vec<Session>, Error> {
-	let kvreq = Request::builder()
-	.method(Method::GET)
-	.uri("http://kv-global.vranish.dev/sessions")
-	.body(Body::from(""))?;
+	let kvreq = Request::get("http://kv-global.vranish.dev/sessions")
+	.with_body_text_plain("");
 	let resp = kvreq.send(KV_GLOBAL)?;
 	let body_str = resp.into_body().into_string();
 	match serde_json::from_str(&body_str) {
@@ -122,10 +120,8 @@ fn add_pings_to_player(player: &mut Player, json: &str) {
 fn write_sessions(sessions: &Vec<Session>) {
 	let json = serde_json::to_string(sessions).unwrap();
 
-	let kvreq = Request::builder()
-	.method(Method::POST)
-	.uri("http://kv-global.vranish.dev/sessions")
-	.body(Body::from(json)).unwrap();
+	let kvreq = Request::post("http://kv-global.vranish.dev/sessions")
+	.with_body_text_plain(&json);
 	let resp = kvreq.send(KV_GLOBAL);
 
 }
@@ -224,7 +220,7 @@ fn get_best_pop_and_update(sessions: &Vec<Session>, sessionid: u32) -> Result<St
 				}
 			}
 
-			if (merged_pops.is_empty()) {
+			if merged_pops.is_empty() {
 				return Err("no pops");
 			}
 			let merged_as_vec: Vec<(&String, &Vec<u32>)> = merged_pops.iter().collect();
@@ -249,7 +245,13 @@ fn prune_stale_sessions(sessions: &mut Vec<Session>, playerid: u32, sessionid: u
 			}
 		}
 		session.players.retain(|p| {
-			now.duration_since(p.last_heartbeat) < Duration::from_secs(60 * 1)
+			true
+
+			// if let Some(d) = now.checked_duration_since(p.last_heartbeat) {
+			// 	d < Duration::from_secs(60)
+			// } else {
+			// 	true
+			// }
 		});
 	}
 	sessions.retain(|s| {
@@ -269,34 +271,30 @@ fn rank_session(s: &Session) -> i32 {
 
 /// If `main` returns an error, a 500 error response will be delivered to the client.
 #[fastly::main]
-	fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
+	fn main(mut req: Request) -> Result<Response, Error> {
     // Make any desired changes to the client request.
-	req.headers_mut()
-        .insert("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
+	req.set_header("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
 
-	if req.method() == Method::OPTIONS {
-        return Ok(Response::builder()
-			.status(StatusCode::OK)
-			.header("Access-Control-Allow-Origin","*")
-			.header("Access-Control-Allow-Headers","*")
-			.header("Vary","Origin")
-            .body(Body::from(""))?);
+	if req.get_method() == Method::OPTIONS {
+        return Ok(Response::from_status(StatusCode::OK)
+			.with_header("Access-Control-Allow-Origin","*")
+			.with_header("Access-Control-Allow-Headers","*")
+			.with_header("Vary","Origin")
+            .with_body_text_plain(""))
 	}
     // We can filter requests that have unexpected methods.
     const VALID_METHODS: [Method; 3] = [Method::HEAD, Method::GET, Method::POST];
-    if !(VALID_METHODS.contains(req.method())) {
-        return Ok(Response::builder()
-            .status(StatusCode::METHOD_NOT_ALLOWED)
-            .body(Body::from("This method is not allowed"))?);
+    if !(VALID_METHODS.contains(req.get_method())) {
+        return Ok(Response::from_status(StatusCode::METHOD_NOT_ALLOWED)
+            .with_body_text_plain("This method is not allowed"));
     }
 
     // Pattern match on the request method and path.
-    match (req.method(), req.uri().path()) {
+    match (req.get_method(), req.get_path()) {
 
 		// If request is a `GET` to the `/` path, send a default response.
-        (&Method::GET, "/") => Ok(Response::builder()
-            .status(StatusCode::OK)
-            .body(Body::from("Welcome to the Doom@Edge Session Services"))?),
+        (&Method::GET, "/") => Ok(Response::from_status(StatusCode::OK)
+            .with_body_text_plain("Welcome to the Doom@Edge Session Services")),
 
 		// get sessions from our kv
 		// return them to the client in this form:
@@ -307,38 +305,35 @@ fn rank_session(s: &Session) -> i32 {
 				Ok(mut sessions) => {
 					prune_stale_sessions(&mut sessions,0,0,false);
 
-					Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(serde_json::to_string(&sessions).unwrap()))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(&serde_json::to_string(&sessions).unwrap()))
 				},
 				_ => {
-					Ok(Response::builder()
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.status(StatusCode::OK)
-					.body(Body::from("0"))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain("0"))
 				}
 			}
 		},
 		(&Method::GET, "/join_best_session") => {
-			let id = match header_val(req.headers().get("id")).parse::<u32>() {
+			let id = match req.get_header_str("id").expect("id").parse::<u32>() {
 				Ok(id) => {id},
 				_ => {
-					println!("Couldn't get id from /join_best_session header: {}", header_val(req.headers().get("id")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get id from /join_best_session header: {}", req.get_header_str("id").expect("id"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
-			let name = header_val(req.headers().get("name"));
-			let pop = header_val(req.headers().get("pop"));
+			let name = req.get_header_str("name").expect("name");
+			let pop = req.get_header_str("pop").expect("pop");
 			let s = get_sessions();
 			match s {
 				Ok(mut sessions) => {
@@ -351,12 +346,11 @@ fn rank_session(s: &Session) -> i32 {
 						for p in &s.players {
 							if p.id == id {
 								println!("/join_best_session {} rejoining existing session {}", id,s.id);
-								return Ok(Response::builder()
-								.status(StatusCode::OK)
-								.header("Access-Control-Allow-Origin","*")
-								.header("Access-Control-Allow-Headers","*")
-								.header("Vary","Origin")
-								.body(Body::from(format!("{},{},{}",s.id,p.index,s.pop)))?);
+								return Ok(Response::from_status(StatusCode::OK)
+								.with_header("Access-Control-Allow-Origin","*")
+								.with_header("Access-Control-Allow-Headers","*")
+								.with_header("Vary","Origin")
+								.with_body_text_plain(&format!("{},{},{}",s.id,p.index,s.pop)));
 							}
 							let rank = rank_session(s);
 							if rank > best {
@@ -370,115 +364,105 @@ fn rank_session(s: &Session) -> i32 {
 						println!("/join_best_session {} joining existing session {}", id,sessionid);
 						match join_session_by_index(best_index as usize,id,name) {
 							Ok((index,pop)) => {
-								return Ok(Response::builder()
-								.status(StatusCode::OK)
-								.header("Access-Control-Allow-Origin","*")
-								.header("Access-Control-Allow-Headers","*")
-								.header("Vary","Origin")
-								.body(Body::from(format!("{},{},{}",sessionid,index,pop)))?);
+								return Ok(Response::from_status(StatusCode::OK)
+								.with_header("Access-Control-Allow-Origin","*")
+								.with_header("Access-Control-Allow-Headers","*")
+								.with_header("Vary","Origin")
+								.with_body_text_plain(&format!("{},{},{}",sessionid,index,pop)));
 							},
 							_ => {
-								return Ok(Response::builder()
-								.status(StatusCode::OK)
-								.header("Access-Control-Allow-Origin","*")
-								.header("Access-Control-Allow-Headers","*")
-								.header("Vary","Origin")
-								.body(Body::from(format!("-1,-1,0")))?);
+								return Ok(Response::from_status(StatusCode::OK)
+								.with_header("Access-Control-Allow-Origin","*")
+								.with_header("Access-Control-Allow-Headers","*")
+								.with_header("Vary","Origin")
+								.with_body_text_plain(&format!("-1,-1,0")));
 							}
 						}
 					} else {
 						let sessionid = create_session(id,name,pop);
 						println!("/join_best_session {} create new session {}", id,sessionid);
-						return Ok(Response::builder()
-						.header("Access-Control-Allow-Origin","*")
-						.header("Access-Control-Allow-Headers","*")
-						.header("Vary","Origin")
-						.status(StatusCode::OK)
-						.body(Body::from(format!("{},{},{}",sessionid,0,pop)))?);
+						return Ok(Response::from_status(StatusCode::OK)
+						.with_header("Access-Control-Allow-Origin","*")
+						.with_header("Access-Control-Allow-Headers","*")
+						.with_header("Vary","Origin")
+						.with_body_text_plain(&format!("{},{},{}",sessionid,0,pop)));
 					}
 				},
 				_ => {
 					let sessionid = create_session(id,name,pop);
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(format!("{},{},{}",sessionid,0,pop)))?);
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(&format!("{},{},{}",sessionid,0,pop)));
 				}
 			}
 		},
 		(&Method::GET, "/join_session") => {
-			let name = header_val(req.headers().get("name"));
-			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
+			let name = req.get_header_str("name").expect("name");
+			let player_id = match req.get_header_str("playerid").expect("playerid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get player id from join_session: {}", header_val(req.headers().get("playerid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get player id from join_session: {}", req.get_header_str("playerid").expect("playerid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
-			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+			let session_id = match req.get_header_str("sessionid").expect("sessionid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get session id from join_session: {}", header_val(req.headers().get("sessionid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get session id from join_session: {}", req.get_header_str("sessionid").expect("sessionid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
 			match join_session(session_id,player_id,name) {
 				Ok((index,pop)) => {
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(format!("{},{}",index,pop)))?);
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(&format!("{},{}",index,pop)));
 				}
 				_ => {
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from("-1,\"\""))?);
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain("-1,\"\""));
 				}
 			}
 		},
 		(&Method::POST, "/update_name_in_session") => {
-			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
+			let player_id = match req.get_header_str("playerid").expect("playerid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get player id from update_name_in_session: {}", header_val(req.headers().get("playerid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get player id from update_name_in_session: {}", req.get_header_str("playerid").expect("playerid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
-			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+			let session_id = match req.get_header_str("sessionid").expect("sessionid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get session id from update_name_in_session: {}", header_val(req.headers().get("sessionid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get session id from update_name_in_session: {}", req.get_header_str("sessionid").expect("sessionid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
-			let name = header_val(req.headers().get("name"));
+			let name = req.get_header_str("name").expect("name");
 			let s = get_sessions();
 			match s {
 				Ok(mut sessions) => {
@@ -493,37 +477,34 @@ fn rank_session(s: &Session) -> i32 {
 					}
 					write_sessions(&sessions);
 
-					Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""))
 				},
 				_ => {
-					Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""))
 				}
 			}
 		},
 		(&Method::POST, "/update_pop_in_session") => {
-			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+			let session_id = match req.get_header_str("sessionid").expect("sessionid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get session id from update_pop_in_session: {}", header_val(req.headers().get("sessionid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get session id from update_pop_in_session: {}", req.get_header_str("sessionid").expect("sessionid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
-			let pop = header_val(req.headers().get("pop"));
+			let pop = req.get_header_str("pop").expect("pop");
 			let s = get_sessions();
 			match s {
 				Ok(mut sessions) => {
@@ -534,46 +515,42 @@ fn rank_session(s: &Session) -> i32 {
 					}
 					write_sessions(&sessions);
 
-					Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""))
 				},
 				_ => {
-					Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""))
 				}
 			}
 		},
 		(&Method::POST, "/heartbeat") => {
-			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
+			let player_id = match req.get_header_str("playerid").expect("playerid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get player id from heartbeat: {}", header_val(req.headers().get("playerid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get player id from heartbeat: {}", req.get_header_str("playerid").expect("playerid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""))
 				}
 			};
-			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+			let session_id = match req.get_header_str("sessionid").expect("sessionid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get session id from heartbeat: {}", header_val(req.headers().get("sessionid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get session id from heartbeat: {}", req.get_header_str("sessionid").expect("sessionid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
 			let s = get_sessions();
@@ -586,64 +563,58 @@ fn rank_session(s: &Session) -> i32 {
 							write_sessions(&sessions);
 							println!("heartbeat for {} {}, returning {}", session_id, player_id, new_pop);
 
-							Ok(Response::builder()
-							.status(StatusCode::OK)
-							.header("Access-Control-Allow-Origin","*")
-							.header("Access-Control-Allow-Headers","*")
-							.header("Vary","Origin")
-							.body(Body::from(format!("{}",new_pop)))?)
+							Ok(Response::from_status(StatusCode::OK)
+							.with_header("Access-Control-Allow-Origin","*")
+							.with_header("Access-Control-Allow-Headers","*")
+							.with_header("Vary","Origin")
+							.with_body_text_plain(&format!("{}",new_pop)))
 						},
 						_ => {
-							Ok(Response::builder()
-							.status(StatusCode::OK)
-							.header("Access-Control-Allow-Origin","*")
-							.header("Access-Control-Allow-Headers","*")
-							.header("Vary","Origin")
-							.body(Body::from(format!("")))?)
+							Ok(Response::from_status(StatusCode::OK)
+							.with_header("Access-Control-Allow-Origin","*")
+							.with_header("Access-Control-Allow-Headers","*")
+							.with_header("Vary","Origin")
+							.with_body_text_plain(&format!("")))
 						}
 					}
 				},
 				_ => {
-					Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""))
 				}
 			}
 		},
 		(&Method::GET, "/get_pops") => {
-			Ok(Response::builder()
-			.status(StatusCode::OK)
-			.header("Access-Control-Allow-Origin","*")
-			.header("Access-Control-Allow-Headers","*")
-			.header("Vary","Origin")
-			.body(Body::from(serde_json::to_string(&POPS).unwrap()))?)
+			Ok(Response::from_status(StatusCode::OK)
+			.with_header("Access-Control-Allow-Origin","*")
+			.with_header("Access-Control-Allow-Headers","*")
+			.with_header("Vary","Origin")
+			.with_body_text_plain(&serde_json::to_string(&POPS).unwrap()))
 		},
 		(&Method::POST, "/add_pings_to_session") => {
-			let player_id = match header_val(req.headers().get("playerid")).parse::<u32>() {
+			let player_id = match req.get_header_str("playerid").expect("playerid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get player id from add_ping_to_session: {}", header_val(req.headers().get("playerid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get player id from add_ping_to_session: {}", req.get_header_str("playerid").expect("playerid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
-			let session_id = match header_val(req.headers().get("sessionid")).parse::<u32>() {
+			let session_id = match req.get_header_str("sessionid").expect("sessionid").parse::<u32>() {
 				Ok(id) => id,
 				_ => {
-					println!("Couldn't get session id from add_ping_to_session: {}", header_val(req.headers().get("sessionid")));
-					return Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?);
+					println!("Couldn't get session id from add_ping_to_session: {}", req.get_header_str("sessionid").expect("sessionid"));
+					return Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""));
 				}
 			};
 			let json = req.into_body().into_string();
@@ -661,26 +632,23 @@ fn rank_session(s: &Session) -> i32 {
 						}
 					}
 					write_sessions(&sessions);
-					Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""))
 				},
 				_ => {
-					Ok(Response::builder()
-					.status(StatusCode::OK)
-					.header("Access-Control-Allow-Origin","*")
-					.header("Access-Control-Allow-Headers","*")
-					.header("Vary","Origin")
-					.body(Body::from(""))?)
+					Ok(Response::from_status(StatusCode::OK)
+					.with_header("Access-Control-Allow-Origin","*")
+					.with_header("Access-Control-Allow-Headers","*")
+					.with_header("Vary","Origin")
+					.with_body_text_plain(""))
 				}
 			}
 		},
 		// Catch all other requests and return a 404.
-        _ => Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::from("The page you requested could not be found"))?),
+        _ => Ok(Response::from_status(StatusCode::NOT_FOUND)
+            .with_body_text_plain("The page you requested could not be found")),
     }
 }

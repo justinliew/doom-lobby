@@ -1,6 +1,9 @@
-version = 44
-name = "doom-lobby"
-description = "Lobby Service for DOOM@EDGE"
+# This file describes a Fastly Compute@Edge package. To learn more visit:
+# https://developer.fastly.com/reference/fastly-toml/
+
 authors = ["jliew+hack@fastly.com"]
+description = "Lobby Service for DOOM@EDGE"
 language = "rust"
+manifest_version = 1
+name = "doom-lobby"
 service_id = "0l9xza2KjUZkXwMT2W23Cz"
